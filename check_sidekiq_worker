@@ -1,0 +1,97 @@
+#!/bin/bash
+# ========================================================================================
+# Sidekiq Worker Count Nagios Check
+#
+# Usage:
+# To check process worker count:
+#        ./check_sidekiq_worker [ -h <host> ] [ -a <password> ] [ <-n mq> ] [ -d <redis-db> ] [-w <warn_perc>] [-c <critical_perc>]
+# Eg:    ./check_sidekiq_queue -w 10 -c 5   # warning at 10 or under used, critical at 5 or under
+#
+# ========================================================================================
+
+# Nagios return codes
+STATE_OK=0
+STATE_WARNING=1
+STATE_CRITICAL=2
+STATE_UNKNOWN=3
+
+WARNING_THRESHOLD=5
+CRITICAL_THRESHOLD=3
+NAMESPACE=""
+HOST="127.0.0.1"
+PASS=""
+DB=0
+
+# Parse parameters
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -d | --db)
+                shift
+                DB=$1
+                ;;
+        -h | --hostname)
+                shift
+                HOST=$1
+                ;;
+        -a | --password)
+                shift
+                PASS=$1
+                ;;
+        -n | --namespace)
+                shift
+                NAMESPACE=$1
+                ;;
+        -w | --warning)
+                shift
+                WARNING_THRESHOLD=$1
+                ;;
+        -c | --critical)
+                shift
+                CRITICAL_THRESHOLD=$1
+                ;;
+        *)  echo "Unknown argument: $1"
+            exit $STATE_UNKNOWN
+            ;;
+        esac
+shift
+done
+
+PATH=/opt/local/bin:$PATH
+NODENAME=$HOSTNAME
+
+ERR=/tmp/redis-cli.error.$$
+rm -f $ERR
+
+function result {
+  DESCRIPTION=$1
+  STATUS=$2
+  echo "SIDEKIQ $DESCRIPTION : ${NODENAME} ${WORKER_COUNT} |sidekiq_worker=${WORKER_COUNT};${WARNING_THRESHOLD};${CRITICAL_THRESHOLD}"
+  rm -f $ERR
+  exit $STATUS
+}
+
+if [ ! -z "$PASS"  ]; then
+  PASS="-a $PASS"
+fi
+
+if [ ! -z "$NAMESPACE"  ]; then
+ NAMESPACE="$NAMESPACE:"
+fi
+
+WORKER_COUNT=`redis-cli -h $HOST $PASS -n $DB scard ${NAMESPACE}processes 2>$ERR | cut -d " " -f 1`
+
+if [ -s "$ERR" ];  then
+  WORKER_COUNT=`cat $ERR`
+  result "CRITICAL" $STATE_CRITICAL
+fi
+
+if [ $WORKER_COUNT -lt $CRITICAL_THRESHOLD ]; then
+  result "CRITICAL" $STATE_CRITICAL
+elif [ $WORKER_COUNT -lt $WARNING_THRESHOLD ]; then
+  result "WARNING" $STATE_WARNING
+else
+  result "OK" $STATE_OK
+fi
+
+# ensure that output from stderr is cleaned up
+rm -f $ERR
